@@ -1,169 +1,182 @@
 #include <WProgram.h>
 #include "Buttons.h"
 
-static const int     NUM_BUTTONS   = 5;
-static const uint8_t BUTTON_MASK   = 0x1F;
-static const uint8_t MODIFIER_MASK = 0x40;
-static const int     NUM_MODE_BTNS = 2;
-static const uint8_t MODE_MASKS[]  = {0x20, 0x80};
 
-
-ButtonManager::ButtonManager()
-	: button_states(0)
-	, buttons_pressed(0)
-	, start_time(0)
-	, mode(0)
-	, on_press(NULL)
-	, on_mode_change(NULL)
+ButtonManager::ButtonManager(const int long_press_duration,
+                             const int     num_modes,
+                             const int     num_btn_norm,
+                             const uint8_t btn_norm_masks[],
+                             const int     num_btn_mode,
+                             const uint8_t btn_mode_masks[],
+                             const int     num_btn_mod,
+                             const uint8_t btn_mod_masks[])
+	: long_press_duration(long_press_duration)
+	, num_modes(num_modes)
+	, num_btn_norm(num_btn_norm)
+	, btn_norm_masks(btn_norm_masks)
+	, num_btn_mode(num_btn_mode)
+	, btn_mode_masks(btn_mode_masks)
+	, num_btn_mod(num_btn_mod)
+	, btn_mod_masks(btn_mod_masks)
+	, mode(1)
+	, cur_btn_states(0)
+	, cum_btn_states(0)
+	, add_btn_states(0)
+	, sub_btn_states(0)
+	, hold_started(false)
+	, hold_start_time(0)
 	, event_fired(false)
+	, on_mode_change(NULL)
+	, on_press(NULL)
 {
 	// Do nothing
 }
 
 
 void
-ButtonManager::set_button_state(int button, bool state)
+ButtonManager::set_btn_states(uint8_t new_btn_states)
 {
-	// First button to be pressed?
-	if ((buttons_pressed & BUTTON_MASK) == 0 && state)
-		reset_press_duration();
+	// What buttons are newly pressed
+	add_btn_states = (~cur_btn_states) & new_btn_states;
 	
-	// Has the button been pressed for the first time
-	if (!get_button_pressed(button) && state)
-		on_any_down(button);
+	// What buttons are newly depressed
+	sub_btn_states = cur_btn_states & (~new_btn_states);
 	
-	// Set button state
-	bitWrite(button_states, button, state);
+	// Update button states
+	cur_btn_states = new_btn_states;
+	cum_btn_states |= new_btn_states;
 	
-	// Record what buttons have been pressed in total
-	buttons_pressed |= button_states;
+	// A new normal/modifier button was held down, reset the hold timer
+	if (is_norm(add_btn_states) || is_mod(add_btn_states)) {
+		reset_hold_timer();
+	}
 	
-	// Has the last button been released?
 	if (!event_fired) {
-		if (button_states == 0 && buttons_pressed != 0 && !state) {
-			on_up();
-		}
-		
-		if (buttons_pressed != 0 && get_press_duration() > LONG_PRESS_DURATION) {
-			on_up();
+		// An event hasn't been fired, can we fire one?
+		if ((cur_btn_states == 0 && sub_btn_states != 0) || hold_timer_expired()) {
+			if (is_mode(cum_btn_states))
+				// Mode change requested
+				fire_mode_change_event();
+			else
+				// Normal keypress
+				fire_press_event();
+			
+			// An event has been fired
 			event_fired = true;
 		}
-	}
-	
-	if (button_states == 0) {
-		// Reset
-		button_states = 0;
-		buttons_pressed = 0;
-		start_time = 0;
-		event_fired = false;
-	}
-}
-
-
-bool
-ButtonManager::get_button_pressed(int button)
-{
-	return (bool) ((buttons_pressed >> button) & 0x01);
-}
-
-
-unsigned long
-ButtonManager::get_press_duration()
-{
-	return millis() - start_time;
-}
-
-
-void
-ButtonManager::reset_press_duration()
-{
-	start_time = millis();
-}
-
-
-void
-ButtonManager::on_up()
-{
-	if (get_mode_btns() != 0) {
-		// Mode change
-		set_new_mode();
-		
-		// Callback
-		if (on_mode_change)
-			on_mode_change(mode);
 	} else {
-		bool long_press = get_press_duration() > LONG_PRESS_DURATION;
-		uint8_t buttons = get_buttons();
-		bool modifier = get_modifier();
-		
-		// Callback
-		if (on_press)
-			on_press(mode, long_press, modifier, buttons);
+		// An event has been fired, can we start again yet?
+		if (cur_btn_states == 0) {
+			stop_hold_timer();
+			event_fired = false;
+			cum_btn_states = 0;
+			add_btn_states = 0;
+		}
 	}
 }
 
 
 void
-ButtonManager::on_any_down(int button)
+ButtonManager::fire_mode_change_event()
 {
-	uint8_t buttons = get_buttons();
-	if (buttons == 0 && button < NUM_MODE_BTNS && on_button_down) {
-		on_button_down();
-	}
+	uint8_t buttons = get_norm(cum_btn_states);
+	
+	int old_mode_type = mode & ((1<<num_btn_mode)-1);
+	int old_mode_num   = mode >> num_btn_mode;
+	
+	int new_mode_type = get_mode(cum_btn_states);
+	int new_mode_num;
+	
+	if (new_mode_type != old_mode_type)
+		new_mode_num = 0;
+	else
+		new_mode_num = (old_mode_num + 1) % num_modes;
+	
+	if (buttons != 0)
+		// A mode has been picked
+		new_mode_num = get_first(buttons);
+	
+	// Calculate new mode
+	mode = (new_mode_num << num_btn_mode) | new_mode_type;
+	
+	// Raise callback 
+	if (on_mode_change)
+		on_mode_change(mode);
 }
 
 
-uint8_t
-ButtonManager::get_buttons()
+void
+ButtonManager::fire_press_event()
 {
-	return buttons_pressed & BUTTON_MASK;
+	uint8_t buttons = get_norm(cum_btn_states);
+	bool long_press = hold_timer_expired();
+	bool modifiers  = get_mod(cum_btn_states);
+	
+	if (on_press)
+		on_press(mode, modifiers, long_press, buttons);
+}
+
+
+void
+ButtonManager::reset_hold_timer()
+{
+	hold_started = true;
+	hold_start_time = millis();
+}
+
+
+void
+ButtonManager::stop_hold_timer()
+{
+	hold_started = false;
 }
 
 
 bool
-ButtonManager::get_modifier()
+ButtonManager::hold_timer_expired()
 {
-	return (buttons_pressed & MODIFIER_MASK) != 0;
+	return hold_started && (millis() - hold_start_time > long_press_duration);
 }
 
-uint8_t
-ButtonManager::get_mode_btns()
+
+bool
+ButtonManager::is_any_set(uint8_t state, const int num_masks, const uint8_t mask[])
 {
-	uint8_t out = 0x00;
-	for (int i = 0; i < NUM_MODE_BTNS; i++)
-		out |= (((buttons_pressed&MODE_MASKS[i]) != 0) << i);
+	for (int i = 0; i < num_masks; i++) {
+		if ((state & mask[i]) != 0)
+			return true;
+	}
+	return false;
+}
+
+
+bool ButtonManager::is_norm(uint8_t s) {return is_any_set(s, num_btn_norm, btn_norm_masks);};
+bool ButtonManager::is_mode(uint8_t s) {return is_any_set(s, num_btn_mode, btn_mode_masks);};
+bool ButtonManager::is_mod(uint8_t s) {return is_any_set(s, num_btn_mod, btn_mod_masks);};
+
+
+uint8_t
+ButtonManager::get_bits(uint8_t state, const int num_masks, const uint8_t mask[])
+{
+	uint8_t out = 0;
+	for (int i = 0; i < num_masks; i++) {
+		out |= ((state & mask[i]) != 0) << i;
+	}
 	return out;
 }
 
 
-// Set the new mode based on the current key combination
-void
-ButtonManager::set_new_mode()
+uint8_t ButtonManager::get_norm(uint8_t s) {return get_bits(s, num_btn_norm, btn_norm_masks);};
+uint8_t ButtonManager::get_mode(uint8_t s) {return get_bits(s, num_btn_mode, btn_mode_masks);};
+uint8_t ButtonManager::get_mod(uint8_t s)  {return get_bits(s, num_btn_mod, btn_mod_masks);};
+
+
+int
+ButtonManager::get_first(uint8_t bits)
 {
-	uint8_t buttons = get_buttons();
+	for (int i = 0; i < 8; i++)
+		if ((bits>>i)&0x1)
+			return i;
 	
-	// Extract the mode-type (last bit)
-	uint8_t new_mode_type = ((mode & 0x8) != 0);
-	
-	// Extract the mode number (first 3 bits)
-	uint8_t new_mode_num = mode & 0x7;
-	
-	if (buttons != 0) {
-		// Specific mode specified by holding down a key
-		for (int i = 0; i < NUM_BUTTONS; i++) {
-			if ((buttons & (1<<i)) != 0)
-				new_mode_num = i;
-		}
-	} else {
-		// Cycle mode num if mode type not changed
-		if (new_mode_type == (get_mode_btns() == 2))
-			new_mode_num = (new_mode_num + 1) % NUM_BUTTONS;
-		else
-			new_mode_num = 0;
-	}
-	
-	new_mode_type = (get_mode_btns() == 2);
-	
-	// Set the mode
-	mode = (new_mode_type << 3) | new_mode_num;
+	return 0;
 }

@@ -9,6 +9,7 @@ class Lighting {
 		Lighting(int pin, int off_angle, int idle_angle, int on_angle);
 		~Lighting();
 		
+		void init();
 		void set(bool state);
 		bool get();
 		

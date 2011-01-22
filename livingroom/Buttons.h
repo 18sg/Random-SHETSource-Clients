@@ -3,44 +3,78 @@
 
 #include <WProgram.h>
 
-static const unsigned long LONG_PRESS_DURATION = 750;
-
 
 class ButtonManager {
 	public:
-		ButtonManager();
+		ButtonManager(const int long_press_duration,
+                  const int     num_modes,
+                  const int     num_btn_norm,
+                  const uint8_t btn_norm_masks[],
+                  const int     num_btn_mode,
+                  const uint8_t btn_mode_masks[],
+                  const int     num_btn_mod,
+                  const uint8_t btn_mod_masks[]);
 		
-		void set_button_state(int button, bool state);
-		bool get_button_pressed(int button);
-		
-		void reset_press_duration();
-		unsigned long get_press_duration();
-		
-		void on_up();
-		void on_any_down(int button);
-		
-		uint8_t get_buttons();
-		bool get_modifier();
-		uint8_t get_mode_btns();
-		
-		void set_new_mode();
-		
-		bool get_mode();
+		// Register the current state of a button
+		void set_btn_states(uint8_t new_btn_states);
 	
-	public:
-		uint8_t button_states;
-		uint8_t buttons_pressed;
-		unsigned long start_time;
+	private:
+		// Length of a long-press in milliseconds
+		const int long_press_duration;
 		
+		// Number of modes per mode button
+		int num_modes;
+		
+		// Normal buttons
+		const int     num_btn_norm;
+		const uint8_t *btn_norm_masks;
+		
+		// Mode buttons
+		const int     num_btn_mode;
+		const uint8_t *btn_mode_masks;
+		
+		// Modifiers
+		const int     num_btn_mod;
+		const uint8_t *btn_mod_masks;
+	
+	
+	private:
 		int mode;
 		
-		bool event_fired;
+		uint8_t cur_btn_states; // Currently pressed buttons
+		uint8_t cum_btn_states; // (Cumaltive) pressed buttons
+		uint8_t add_btn_states; // Newly pressed (added) buttons
+		uint8_t sub_btn_states; // Newly depressed (subtracted) buttons
+		
+		bool hold_started;
+		unsigned long hold_start_time;
+		
+		bool event_fired; // Has an event been fired for this key press
+		
+		void fire_mode_change_event();
+		void fire_press_event();
+		
+		void stop_hold_timer();
+		void reset_hold_timer();
+		bool hold_timer_expired();
+		
+		bool is_any_set(uint8_t state, const int num_masks, const uint8_t mask[]);
+		
+		bool is_norm(uint8_t state);
+		bool is_mode(uint8_t state);
+		bool is_mod(uint8_t state);
+		
+		uint8_t get_bits(uint8_t state, const int num_masks, const uint8_t mask[]);
+		
+		uint8_t get_norm(uint8_t state);
+		uint8_t get_mode(uint8_t state);
+		uint8_t get_mod(uint8_t state);
+		
+		int get_first(uint8_t bits);
 	
 	public:
-		void (*on_press)(int mode, bool long_press, bool modifier, uint8_t buttons);
 		void (*on_mode_change)(int mode);
-		
-		void (*on_button_down)();
+		void (*on_press)(int mode, uint8_t modifiers, bool long_press, uint8_t buttons);
 };
 
 

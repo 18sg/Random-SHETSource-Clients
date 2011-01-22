@@ -32,12 +32,11 @@ static const int APIN_WASHING            = 4;
 
 
 /******************************************************************************
- * Constant Values                                                            *
+ * SHET Node Names                                                            *
  ******************************************************************************/
 
-static const int SLOW_LOOP_PERIOD        = 1000;
-
 static char *SHETSOURCE_PATH             = "livingroom";
+
 static char *LIGHT_KITCHEN_NAME          = "light_kitchen";
 static char *LIGHT_LOUNGE_NAME           = "light_lounge";
 
@@ -49,6 +48,13 @@ static char *WASHING_STATE_NAME          = "get_washing_state";
 
 static char *BTNS_ON_PRESS_NAME          = "btn_pressed";
 static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
+
+
+/******************************************************************************
+ * Constant Values                                                            *
+ ******************************************************************************/
+
+static const int SLOW_LOOP_PERIOD        = 1000;
 
 static const int RGBLED_FADE_FAST        = 250;
 
@@ -63,7 +69,18 @@ static const int SERVO_LOUNGE_ON         = 65;
 static const int SERVO_LOUNGE_IDLE       = 90;
 static const int SERVO_LOUNGE_OFF        = 115;
 
-static const unsigned long LONG_PRESS    = 500;
+static const unsigned long LONG_PRESS    = 750;
+
+static const uint8_t NUM_MODES           = 5;
+
+static const uint8_t NUM_BTN_NORM        = 5;
+static const uint8_t BTN_NORM_MASKS[]    = {0x01, 0x02, 0x04, 0x08, 0x10};
+
+static const uint8_t NUM_BTN_MODE        = 2;
+static const uint8_t BTN_MODE_MASKS[]    = {0x20, 0x80};
+
+static const uint8_t NUM_BTN_MOD         = 1;
+static const uint8_t BTN_MOD_MASKS[]     = {0x40};
 
 
 
@@ -121,6 +138,10 @@ lights_init()
 	// Add SHET properties
 	shetsource.AddProperty(LIGHT_KITCHEN_NAME, set_light_kitchen, get_light_kitchen);
 	shetsource.AddProperty(LIGHT_LOUNGE_NAME,  set_light_lounge,  get_light_lounge);
+	
+	// Move servos to rest position
+	light_kitchen.init();
+	light_lounge.init();
 }
 
 
@@ -265,31 +286,28 @@ washing_refresh()
  * Button Panel                                                               *
  ******************************************************************************/
 
-ButtonManager btns;
-
-Colour btns_old_colour;
+ButtonManager btns = ButtonManager(LONG_PRESS,
+                                   NUM_MODES,
+                                   NUM_BTN_NORM,
+                                   BTN_NORM_MASKS,
+                                   NUM_BTN_MODE,
+                                   BTN_MODE_MASKS,
+                                   NUM_BTN_MOD,
+                                   BTN_MOD_MASKS);
 
 SHETSource::LocalEvent *evt_on_press;
 SHETSource::LocalEvent *evt_on_mode_change;
 
+
 void
-btn_on_press(int mode, bool long_press, bool modifier, uint8_t buttons)
+btn_on_press(int mode, uint8_t modifiers, bool long_press, uint8_t buttons)
 {
 	int encoded = 0;
-	encoded |= buttons;
-	encoded |= modifier << 5;
-	encoded |= long_press << 6;
-	encoded |= mode << 7;
+	encoded = mode;
+	encoded = (encoded<<NUM_BTN_MOD) | modifiers;
+	encoded = (encoded<<1) | long_press;
+	encoded = (encoded<<NUM_BTN_NORM) | buttons;
 	(*evt_on_press)(encoded);
-	
-	if (long_press) {
-		rgbled.cur_col.r = 0;
-		rgbled.cur_col.g = 255;
-		rgbled.cur_col.b = 0;
-		rgbled.set_colour(btns_old_colour, RGBLED_FADE_FAST);
-	} else {
-		rgbled.set_colour(btns_old_colour, RGBLED_FADE_FAST);
-	}
 }
 
 
@@ -297,17 +315,6 @@ void
 btn_on_mode_change(int mode)
 {
 	(*evt_on_mode_change)(mode);
-}
-
-
-void
-btn_on_button_down()
-{
-	// Store previous colour
-	btns_old_colour.r = rgbled.new_col.r;
-	btns_old_colour.g = rgbled.new_col.g;
-	btns_old_colour.b = rgbled.new_col.b;
-	set_rgbled_colour(0,0,0, LONG_PRESS_DURATION);
 }
 
 
@@ -324,9 +331,10 @@ btns_init()
 	evt_on_press = shetsource.AddEvent(BTNS_ON_PRESS_NAME);
 	evt_on_mode_change = shetsource.AddEvent(BTNS_ON_MODE_CHANGE_NAME);
 	
-	btns.on_press = btn_on_press;
+	
+	// Bind callbacks
 	btns.on_mode_change = btn_on_mode_change;
-	btns.on_button_down = btn_on_button_down;
+	btns.on_press = btn_on_press;
 }
 
 
@@ -334,8 +342,11 @@ void
 btns_refresh()
 {
 	// Read in pins
+	uint8_t btn_states = 0;
 	for (int i = 0; i < NUM_BTNS; i++)
-		btns.set_button_state(i, !digitalRead(PIN_BTN[i]));
+		btn_states |= (!digitalRead(PIN_BTN[i])) << i;
+	
+	btns.set_btn_states(btn_states);
 }
 
 

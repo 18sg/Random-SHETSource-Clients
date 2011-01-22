@@ -27,6 +27,15 @@ Lighting::set(bool new_state)
 }
 
 
+void
+Lighting::init()
+{
+	servo.attach(pin);
+	servo.write(idle_angle);
+	last_change = millis();
+}
+
+
 bool
 Lighting::get()
 {
