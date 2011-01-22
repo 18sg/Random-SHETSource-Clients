@@ -2,6 +2,7 @@
 #include <Servo.h>
 #include <RGBLED.h>
 #include <Lighting.h>
+#include <Buttons.h>
 
 #include "pins.h"
 #include "comms.h"
@@ -46,9 +47,13 @@ static char *RGBLED_SET_FAST_NAME        = "set_rgbled";
 static char *WASHING_FINISHED_NAME       = "washing_finished";
 static char *WASHING_STATE_NAME          = "get_washing_state";
 
+static char *BTNS_ON_PRESS_NAME          = "btn_pressed";
+static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
+
 static const int RGBLED_FADE_FAST        = 250;
 
 static const int WASHING_STATE_THRESHOLD = 512;
+static const unsigned long WASHING_MIN   = 5;
 
 static const int SERVO_KITCHEN_ON        = 60;
 static const int SERVO_KITCHEN_IDLE      = 90;
@@ -127,10 +132,13 @@ lights_refresh()
 	static bool btn_state = false;
 	bool new_btn_state = !digitalRead(PIN_LIGHTSWITCH);
 	if (new_btn_state != btn_state && new_btn_state == false) {
-		// On button up
-		light_kitchen_requested = light_lounge_requested = true;
-		light_kitchen_state = light_lounge_state
-			= !(light_lounge.get() && light_kitchen.get());
+		// "Debounce"
+		if (!(light_kitchen_requested || light_lounge_requested)) {
+			// On button up
+			light_kitchen_requested = light_lounge_requested = true;
+			light_kitchen_state = light_lounge_state
+				= !(light_lounge.get() && light_kitchen.get());
+		}
 	}
 	btn_state = new_btn_state;
 	
@@ -167,6 +175,16 @@ set_rgbled_colour(int encoded, int duration)
 	colour.r = ((encoded >>  0) & 0x1F) << 3;
 	colour.g = ((encoded >>  5) & 0x1F) << 3;
 	colour.b = ((encoded >> 10) & 0x1F) << 3;
+	rgbled.set_colour(colour, duration);
+}
+
+void
+set_rgbled_colour(int r, int g, int b, int duration)
+{
+	Colour colour;
+	colour.r = r;
+	colour.g = g;
+	colour.b = b;
 	rgbled.set_colour(colour, duration);
 }
 
@@ -230,13 +248,94 @@ washing_refresh()
 	
 	if (state != new_state && new_state == false) {
 		// Washing finished
-		(*washing_finished)((millis() - start_time) / 1000);
+		int run_time = (millis() - start_time) / 1000;
+		if (run_time >= WASHING_MIN)
+			(*washing_finished)(run_time);
 	} else if (state != new_state && new_state == true) {
 		// Washing started
 		start_time = millis();
 	}
 	
 	state = new_state;
+}
+
+
+
+/******************************************************************************
+ * Button Panel                                                               *
+ ******************************************************************************/
+
+ButtonManager btns;
+
+Colour btns_old_colour;
+
+SHETSource::LocalEvent *evt_on_press;
+SHETSource::LocalEvent *evt_on_mode_change;
+
+void
+btn_on_press(int mode, bool long_press, bool modifier, uint8_t buttons)
+{
+	int encoded = 0;
+	encoded |= buttons;
+	encoded |= modifier << 5;
+	encoded |= long_press << 6;
+	encoded |= mode << 7;
+	(*evt_on_press)(encoded);
+	
+	if (long_press) {
+		rgbled.cur_col.r = 0;
+		rgbled.cur_col.g = 255;
+		rgbled.cur_col.b = 0;
+		rgbled.set_colour(btns_old_colour, RGBLED_FADE_FAST);
+	} else {
+		rgbled.set_colour(btns_old_colour, RGBLED_FADE_FAST);
+	}
+}
+
+
+void
+btn_on_mode_change(int mode)
+{
+	(*evt_on_mode_change)(mode);
+}
+
+
+void
+btn_on_button_down()
+{
+	// Store previous colour
+	btns_old_colour.r = rgbled.new_col.r;
+	btns_old_colour.g = rgbled.new_col.g;
+	btns_old_colour.b = rgbled.new_col.b;
+	set_rgbled_colour(0,0,0, LONG_PRESS_DURATION);
+}
+
+
+void
+btns_init()
+{
+	// Setup pins
+	for (int i = 0; i < NUM_BTNS; i++) {
+		pinMode(PIN_BTN[i], INPUT);
+		digitalWrite(PIN_BTN[i], LOW);
+	}
+	
+	// Setup SHET events
+	evt_on_press = shetsource.AddEvent(BTNS_ON_PRESS_NAME);
+	evt_on_mode_change = shetsource.AddEvent(BTNS_ON_MODE_CHANGE_NAME);
+	
+	btns.on_press = btn_on_press;
+	btns.on_mode_change = btn_on_mode_change;
+	btns.on_button_down = btn_on_button_down;
+}
+
+
+void
+btns_refresh()
+{
+	// Read in pins
+	for (int i = 0; i < NUM_BTNS; i++)
+		btns.set_button_state(i, !digitalRead(PIN_BTN[i]));
 }
 
 
@@ -252,6 +351,7 @@ setup()
 	lights_init();
 	rgbled_init();
 	washing_init();
+	btns_init();
 }
 
 
@@ -262,6 +362,7 @@ fast_loop()
 	shetsource.DoSHET();
 	rgbled_refresh();
 	lights_refresh();
+	btns_refresh();
 }
 
 
