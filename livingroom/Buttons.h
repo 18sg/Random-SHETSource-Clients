@@ -53,7 +53,7 @@ class ButtonManager {
 		bool event_fired; // Has an event been fired for this key press
 		
 		void fire_mode_change_event();
-		void fire_press_event();
+		void fire_press_event(bool long_press);
 		
 		void stop_hold_timer(bool finished);
 		void reset_hold_timer();

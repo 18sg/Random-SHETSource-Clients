@@ -61,6 +61,7 @@ ButtonManager::set_btn_states(uint8_t new_btn_states)
 		    || hold_timer_expired() // Held down for long enough
 		    || (is_mode(cum_btn_states) && is_norm(cum_btn_states)) // Mode selected
 		    ) {
+			bool long_press = hold_timer_expired();
 			stop_hold_timer(true);
 			
 			if (is_mode(cum_btn_states))
@@ -68,7 +69,7 @@ ButtonManager::set_btn_states(uint8_t new_btn_states)
 				fire_mode_change_event();
 			else
 				// Normal keypress
-				fire_press_event();
+				fire_press_event(long_press);
 			
 			// An event has been fired
 			event_fired = true;
@@ -114,10 +115,9 @@ ButtonManager::fire_mode_change_event()
 
 
 void
-ButtonManager::fire_press_event()
+ButtonManager::fire_press_event(bool long_press)
 {
 	uint8_t buttons = get_norm(cum_btn_states);
-	bool long_press = hold_timer_expired();
 	bool modifiers  = get_mod(cum_btn_states);
 	
 	if (on_press)
