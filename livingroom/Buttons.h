@@ -38,9 +38,10 @@ class ButtonManager {
 		const uint8_t *btn_mod_masks;
 	
 	
-	private:
+	public:
 		int mode;
-		
+	
+	private:
 		uint8_t cur_btn_states; // Currently pressed buttons
 		uint8_t cum_btn_states; // (Cumaltive) pressed buttons
 		uint8_t add_btn_states; // Newly pressed (added) buttons
@@ -54,7 +55,7 @@ class ButtonManager {
 		void fire_mode_change_event();
 		void fire_press_event();
 		
-		void stop_hold_timer();
+		void stop_hold_timer(bool finished);
 		void reset_hold_timer();
 		bool hold_timer_expired();
 		
@@ -75,6 +76,9 @@ class ButtonManager {
 	public:
 		void (*on_mode_change)(int mode);
 		void (*on_press)(int mode, uint8_t modifiers, bool long_press, uint8_t buttons);
+		
+		void (*on_hold_start)(bool starting);
+		void (*on_hold_end)(bool finished);
 };
 
 

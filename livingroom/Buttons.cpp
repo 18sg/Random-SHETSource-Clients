@@ -28,6 +28,8 @@ ButtonManager::ButtonManager(const int long_press_duration,
 	, event_fired(false)
 	, on_mode_change(NULL)
 	, on_press(NULL)
+	, on_hold_start(NULL)
+	, on_hold_end(NULL)
 {
 	// Do nothing
 }
@@ -49,6 +51,8 @@ ButtonManager::set_btn_states(uint8_t new_btn_states)
 	// A new normal/modifier button was held down, reset the hold timer
 	if (is_norm(add_btn_states) || is_mod(add_btn_states)) {
 		reset_hold_timer();
+	} else if (is_mode(cum_btn_states)) {
+		stop_hold_timer(false);
 	}
 	
 	if (!event_fired) {
@@ -61,13 +65,14 @@ ButtonManager::set_btn_states(uint8_t new_btn_states)
 				// Normal keypress
 				fire_press_event();
 			
+			stop_hold_timer(true);
+			
 			// An event has been fired
 			event_fired = true;
 		}
 	} else {
 		// An event has been fired, can we start again yet?
 		if (cur_btn_states == 0) {
-			stop_hold_timer();
 			event_fired = false;
 			cum_btn_states = 0;
 			add_btn_states = 0;
@@ -120,14 +125,18 @@ ButtonManager::fire_press_event()
 void
 ButtonManager::reset_hold_timer()
 {
+	if (on_hold_start)
+		on_hold_start(!hold_started);
 	hold_started = true;
 	hold_start_time = millis();
 }
 
 
 void
-ButtonManager::stop_hold_timer()
+ButtonManager::stop_hold_timer(bool finished)
 {
+	if (hold_started && on_hold_end)
+		on_hold_end(finished && hold_timer_expired());
 	hold_started = false;
 }
 

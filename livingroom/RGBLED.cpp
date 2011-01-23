@@ -11,6 +11,9 @@ RGBLED::RGBLED(int pin_r, int pin_g, int pin_b)
 	, last_refresh(0)
 {
 	// Do nothing
+	new_col.r = old_col.r = cur_col.r = 255;
+	new_col.g = old_col.g = cur_col.g = 255;
+	new_col.b = old_col.b = cur_col.b = 255;
 }
 
 RGBLED::~RGBLED()

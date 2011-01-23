@@ -82,6 +82,24 @@ static const uint8_t BTN_MODE_MASKS[]    = {0x20, 0x80};
 static const uint8_t NUM_BTN_MOD         = 1;
 static const uint8_t BTN_MOD_MASKS[]     = {0x40};
 
+static const int MODE_COLOURS[1<<NUM_BTN_MODE][NUM_BTN_NORM][3]
+                                         = {{{  0,  0,  0},  // Ignored
+                                             {  0,  0,  0},  // Ignored
+                                             {  0,  0,  0},  // Ignored
+                                             {  0,  0,  0},  // Ignored
+                                             {  0,  0,  0}}, // Ignored
+                                            {{255,  0,  0},  // Mode 1:0
+                                             {  0,255,  0},  // Mode 1:1
+                                             {  0,  0,255},  // Mode 1:2
+                                             {255,  0,255},  // Mode 1:3
+                                             {255,255,  0}}, // Mode 1:4
+                                            {{ 63,  0,  0},  // Mode 2:0
+                                             {  0, 63,  0},  // Mode 2:1
+                                             {  0,  0, 63},  // Mode 2:2
+                                             { 63,  0, 63},  // Mode 2:3
+                                             { 63, 63,  0}}  // Mode 2:4
+                                           };
+
 
 
 /******************************************************************************
@@ -298,6 +316,18 @@ ButtonManager btns = ButtonManager(LONG_PRESS,
 SHETSource::LocalEvent *evt_on_press;
 SHETSource::LocalEvent *evt_on_mode_change;
 
+Colour btn_old_colour;
+
+
+void
+btn_set_colour(int mode)
+{
+	set_rgbled_colour(MODE_COLOURS[mode&0x3][mode>>2][0],
+	                  MODE_COLOURS[mode&0x3][mode>>2][1],
+	                  MODE_COLOURS[mode&0x3][mode>>2][2],
+	                  RGBLED_FADE_FAST);
+}
+
 
 void
 btn_on_press(int mode, uint8_t modifiers, bool long_press, uint8_t buttons)
@@ -314,7 +344,34 @@ btn_on_press(int mode, uint8_t modifiers, bool long_press, uint8_t buttons)
 void
 btn_on_mode_change(int mode)
 {
+	btn_set_colour(mode);
 	(*evt_on_mode_change)(mode);
+}
+
+
+void
+btn_on_hold_start(bool starting)
+{
+	if (starting) {
+		btn_old_colour.r = rgbled.new_col.r;
+		btn_old_colour.g = rgbled.new_col.g;
+		btn_old_colour.b = rgbled.new_col.b;
+	}
+	
+	// Start fading the LED off
+	set_rgbled_colour(0,0,0, LONG_PRESS);
+}
+
+
+void
+btn_on_hold_end(bool finished)
+{
+	if (finished) {
+		rgbled.cur_col.r = 0;
+		rgbled.cur_col.g = 255;
+		rgbled.cur_col.b = 0;
+	}
+	rgbled.set_colour(btn_old_colour, RGBLED_FADE_FAST);
 }
 
 
@@ -335,6 +392,10 @@ btns_init()
 	// Bind callbacks
 	btns.on_mode_change = btn_on_mode_change;
 	btns.on_press = btn_on_press;
+	btns.on_hold_start = btn_on_hold_start;
+	btns.on_hold_end = btn_on_hold_end;
+	
+	btn_set_colour(btns.mode);
 }
 
 
