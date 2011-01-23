@@ -54,6 +54,7 @@ static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
  * Constant Values                                                            *
  ******************************************************************************/
 
+static const int BTN_LOOP_PERIOD         = 100;
 static const int SLOW_LOOP_PERIOD        = 1000;
 
 static const int RGBLED_FADE_FAST        = 250;
@@ -433,6 +434,13 @@ fast_loop()
 {
 	shetsource.DoSHET();
 	rgbled_refresh();
+}
+
+
+// Mainloop executed less frequently for button scanning
+inline void
+btn_loop()
+{
 	lights_refresh();
 	btns_refresh();
 }
@@ -457,5 +465,10 @@ loop()
 	counter++;
 	if (counter % SLOW_LOOP_PERIOD == 0) {
 		slow_loop();
+	}
+	
+	// Execute a section of the main loop for button reading (pseudo debounce)
+	if (counter % BTN_LOOP_PERIOD == 0) {
+		btn_loop();
 	}
 }

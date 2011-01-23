@@ -57,15 +57,18 @@ ButtonManager::set_btn_states(uint8_t new_btn_states)
 	
 	if (!event_fired) {
 		// An event hasn't been fired, can we fire one?
-		if ((cur_btn_states == 0 && sub_btn_states != 0) || hold_timer_expired()) {
+		if ((cur_btn_states == 0 && sub_btn_states != 0) // All buttons released
+		    || hold_timer_expired() // Held down for long enough
+		    || (is_mode(cum_btn_states) && is_norm(cum_btn_states)) // Mode selected
+		    ) {
+			stop_hold_timer(true);
+			
 			if (is_mode(cum_btn_states))
 				// Mode change requested
 				fire_mode_change_event();
 			else
 				// Normal keypress
 				fire_press_event();
-			
-			stop_hold_timer(true);
 			
 			// An event has been fired
 			event_fired = true;
