@@ -35,20 +35,22 @@ static const int APIN_WASHING            = 4;
  * SHET Node Names                                                            *
  ******************************************************************************/
 
-static char *SHETSOURCE_PATH             = "livingroom";
+static char *SHETSOURCE_PATH             = "lounge/arduino";
 
 static char *LIGHT_KITCHEN_NAME          = "light_kitchen";
 static char *LIGHT_LOUNGE_NAME           = "light_lounge";
+static char *LIGHT_TOGGLE_NAME           = "light_toggle";
 
 static char *RGBLED_SET_INSTANT_NAME     = "set_rgbled_instant";
 static char *RGBLED_SET_FAST_NAME        = "set_rgbled";
 
 static char *WASHING_FINISHED_NAME       = "washing_finished";
+static char *WASHING_STARTED_NAME        = "washing_started";
 static char *WASHING_STATE_NAME          = "get_washing_state";
 
 static char *BTNS_ON_PRESS_NAME          = "btn_pressed";
 static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
-
+static char *BTNS_SET_MODE               = "set_btn_mode";
 
 /******************************************************************************
  * Constant Values                                                            *
@@ -148,6 +150,15 @@ int get_light_kitchen() { return light_kitchen.get(); }
 int get_light_lounge()  { return light_lounge.get(); }
 
 void
+lights_toggle()
+{
+	light_kitchen_requested = light_lounge_requested = true;
+	light_kitchen_state = light_lounge_state
+		= !(light_lounge.get() && light_kitchen.get());
+}
+
+
+void
 lights_init()
 {
 	// Setup lightswitch
@@ -157,6 +168,8 @@ lights_init()
 	// Add SHET properties
 	shetsource.AddProperty(LIGHT_KITCHEN_NAME, set_light_kitchen, get_light_kitchen);
 	shetsource.AddProperty(LIGHT_LOUNGE_NAME,  set_light_lounge,  get_light_lounge);
+	
+	shetsource.AddAction(LIGHT_TOGGLE_NAME, lights_toggle);
 	
 	// Move servos to rest position
 	light_kitchen.init();
@@ -175,9 +188,7 @@ lights_refresh()
 		// "Debounce"
 		if (!(light_kitchen_requested || light_lounge_requested)) {
 			// On button up
-			light_kitchen_requested = light_lounge_requested = true;
-			light_kitchen_state = light_lounge_state
-				= !(light_lounge.get() && light_kitchen.get());
+			lights_toggle();
 		}
 	}
 	btn_state = new_btn_state;
@@ -257,14 +268,19 @@ void rgbled_refresh() { rgbled.refresh(true); }
  ******************************************************************************/
 
 // Event fired when washing finishes
+SHETSource::LocalEvent *washing_started;
 SHETSource::LocalEvent *washing_finished;
+
+static unsigned long washing_start_time = 0;
 
 
 // Getter for washing state
 int
 get_washing_state()
 {
-	return analogRead(APIN_WASHING) > WASHING_STATE_THRESHOLD;
+	return (analogRead(APIN_WASHING) > WASHING_STATE_THRESHOLD)
+	       ? (int)((millis() - washing_start_time) / 1000l)
+	       : 0;
 }
 
 
@@ -273,6 +289,7 @@ washing_init()
 {
 	// Add SHET properties
 	washing_finished = shetsource.AddEvent(WASHING_FINISHED_NAME);
+	washing_started = shetsource.AddEvent(WASHING_STARTED_NAME);
 	shetsource.AddAction(WASHING_STATE_NAME, get_washing_state);
 }
 
@@ -280,20 +297,19 @@ washing_init()
 void
 washing_refresh()
 {
-	static unsigned long start_time = 0;
 	static bool state = false;
-	bool new_state = get_washing_state();
-	
-	//set_rgbled_colour_instant(new_state ? 0x1f << 5 : 0x1f);
+	bool new_state = analogRead(APIN_WASHING) > WASHING_STATE_THRESHOLD;
 	
 	if (state != new_state && new_state == false) {
 		// Washing finished
-		int run_time = (millis() - start_time) / 1000;
+		int run_time = (millis() - washing_start_time) / 1000;
 		if (run_time >= WASHING_MIN)
 			(*washing_finished)(run_time);
 	} else if (state != new_state && new_state == true) {
 		// Washing started
-		start_time = millis();
+		if (millis() - washing_start_time > 5000)
+			(*washing_started)();
+		washing_start_time = millis();
 	}
 	
 	state = new_state;
@@ -377,6 +393,14 @@ btn_on_hold_end(bool finished)
 
 
 void
+btn_set_mode(int mode)
+{
+	btns.mode = mode;
+	btn_on_mode_change(mode);
+}
+
+
+void
 btns_init()
 {
 	// Setup pins
@@ -388,13 +412,14 @@ btns_init()
 	// Setup SHET events
 	evt_on_press = shetsource.AddEvent(BTNS_ON_PRESS_NAME);
 	evt_on_mode_change = shetsource.AddEvent(BTNS_ON_MODE_CHANGE_NAME);
+	shetsource.AddAction(BTNS_SET_MODE, btn_set_mode);
 	
 	
 	// Bind callbacks
 	btns.on_mode_change = btn_on_mode_change;
-	btns.on_press = btn_on_press;
-	btns.on_hold_start = btn_on_hold_start;
-	btns.on_hold_end = btn_on_hold_end;
+	btns.on_press       = btn_on_press;
+	btns.on_hold_start  = btn_on_hold_start;
+	btns.on_hold_end    = btn_on_hold_end;
 	
 	btn_set_colour(btns.mode);
 }
