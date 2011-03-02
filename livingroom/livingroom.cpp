@@ -19,7 +19,7 @@ static const int PIN_SHETSOURCE_WRITE    = 15;
 static const int PIN_SERVO_KITCHEN       = 9;
 static const int PIN_SERVO_LOUNGE        = 10;
 
-static const int PIN_LIGHTSWITCH         = 19;
+static const int APIN_LIGHTSWITCH        = 5;
 
 static const int PIN_RGBLED_R            = 5;
 static const int PIN_RGBLED_G            = 6;
@@ -50,7 +50,10 @@ static char *WASHING_STATE_NAME          = "get_washing_state";
 
 static char *BTNS_ON_PRESS_NAME          = "btn_pressed";
 static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
-static char *BTNS_SET_MODE               = "set_btn_mode";
+static char *BTNS_MODE                   = "btn_mode";
+
+static char *PIR_NAME                    = "pir";
+static char *LIGHTSWITCH_PRESSED_NAME    = "btn_lightswitch";
 
 /******************************************************************************
  * Constant Values                                                            *
@@ -103,6 +106,9 @@ static const int MODE_COLOURS[1<<NUM_BTN_MODE][NUM_BTN_NORM][3]
                                              { 63, 63,  0}}  // Mode 2:4
                                            };
 
+static const int PIR_THRESHOLD           = 700;
+static const int LIGHTSWITCH_THRESHOLD   = 200;
+
 
 
 /******************************************************************************
@@ -140,6 +146,10 @@ Lighting light_lounge  = Lighting(PIN_SERVO_LOUNGE,
 bool light_kitchen_requested, light_kitchen_state;
 bool light_lounge_requested,  light_lounge_state;
 
+// Lounge PIR event
+SHETSource::LocalEvent *pir;
+SHETSource::LocalEvent *lightswitch_pressed;
+
 
 // Setters
 void set_light_kitchen(int s) { light_kitchen_requested = true; light_kitchen_state = s; }
@@ -162,14 +172,17 @@ void
 lights_init()
 {
 	// Setup lightswitch
-	pinMode(PIN_LIGHTSWITCH, INPUT);
-	digitalWrite(PIN_LIGHTSWITCH, LOW);
+	pinMode(APIN_LIGHTSWITCH, INPUT);
+	digitalWrite(APIN_LIGHTSWITCH, LOW);
 	
 	// Add SHET properties
 	shetsource.AddProperty(LIGHT_KITCHEN_NAME, set_light_kitchen, get_light_kitchen);
 	shetsource.AddProperty(LIGHT_LOUNGE_NAME,  set_light_lounge,  get_light_lounge);
 	
 	shetsource.AddAction(LIGHT_TOGGLE_NAME, lights_toggle);
+	
+	pir = shetsource.AddEvent(PIR_NAME);
+	lightswitch_pressed = shetsource.AddEvent(LIGHTSWITCH_PRESSED_NAME);
 	
 	// Move servos to rest position
 	light_kitchen.init();
@@ -180,18 +193,22 @@ lights_init()
 void
 lights_refresh()
 {
+	int pin = analogRead(APIN_LIGHTSWITCH);
+	bool new_btn_state = pin < LIGHTSWITCH_THRESHOLD;
+	bool new_pir_state = (pin > LIGHTSWITCH_THRESHOLD) && (pin < PIR_THRESHOLD);
+	
 	// TODO: Rewrite with button library
 	// Handle button
 	static bool btn_state = false;
-	bool new_btn_state = !digitalRead(PIN_LIGHTSWITCH);
-	if (new_btn_state != btn_state && new_btn_state == false) {
-		// "Debounce"
-		if (!(light_kitchen_requested || light_lounge_requested)) {
-			// On button up
-			lights_toggle();
-		}
-	}
+	if (new_btn_state != btn_state && new_btn_state == true)
+		(*lightswitch_pressed)();
 	btn_state = new_btn_state;
+	
+	// Handle PIR
+	static bool pir_state = false;
+	if (new_pir_state != pir_state && new_pir_state == true)
+		(*pir)();
+	pir_state = new_pir_state;
 	
 	// Refresh servos
 	light_kitchen.refresh();
@@ -400,6 +417,13 @@ btn_set_mode(int mode)
 }
 
 
+int
+btn_get_mode()
+{
+	return btns.mode;
+}
+
+
 void
 btns_init()
 {
@@ -412,7 +436,7 @@ btns_init()
 	// Setup SHET events
 	evt_on_press = shetsource.AddEvent(BTNS_ON_PRESS_NAME);
 	evt_on_mode_change = shetsource.AddEvent(BTNS_ON_MODE_CHANGE_NAME);
-	shetsource.AddAction(BTNS_SET_MODE, btn_set_mode);
+	shetsource.AddProperty(BTNS_MODE, btn_set_mode, btn_get_mode);
 	
 	
 	// Bind callbacks
