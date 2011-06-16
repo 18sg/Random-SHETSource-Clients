@@ -7,28 +7,40 @@
 #include "pins.h"
 #include "comms.h"
 #include "SHETSource.h"
+#include "Wire.h"
+#include "i2c_expander.h"
 
 
 /******************************************************************************
  * Pin Assignments                                                            *
  ******************************************************************************/
 
-static const int PIN_SHETSOURCE_READ     = 14;
-static const int PIN_SHETSOURCE_WRITE    = 15;
+static const int PIN_SHETSOURCE_READ     = 7;
+static const int PIN_SHETSOURCE_WRITE    = 8;
 
 static const int PIN_SERVO_KITCHEN       = 9;
 static const int PIN_SERVO_LOUNGE        = 10;
 
-static const int APIN_LIGHTSWITCH        = 5;
+static const int PIN_LIGHTSWITCH         = RB3;
 
-static const int PIN_RGBLED_R            = 5;
-static const int PIN_RGBLED_G            = 6;
-static const int PIN_RGBLED_B            = 11;
+static const int PIN_BACKDOOR            = RB4;
 
-static const int PIN_BTN[]               = {2,3,4,7,8,12,16,17};
+static const int PIN_RGBLED_R            = 3;
+static const int PIN_RGBLED_G            = 5;
+static const int PIN_RGBLED_B            = 6;
+
+static const int PIN_IO_INTERRUPT        = 12;
+
+static const int PIN_BTN[]               = {RC6,RC7,RB0,RB1,RB2,
+                                                RC0,RC1,RC2    };
 static const int NUM_BTNS                = 8;
 
-static const int APIN_WASHING            = 4;
+static const int APIN_WASHING            = 0;
+static const int APIN_OVEN               = 1;
+static const int APIN_PIR                = 2;
+
+static const int PIN_AMP_A               = RB5;
+static const int PIN_AMP_B               = RB6;
 
 
 /******************************************************************************
@@ -52,17 +64,35 @@ static char *BTNS_ON_PRESS_NAME          = "btn_pressed";
 static char *BTNS_ON_MODE_CHANGE_NAME    = "btn_mode_changed";
 static char *BTNS_MODE                   = "btn_mode";
 
-static char *PIR_NAME                    = "pir";
 static char *LIGHTSWITCH_PRESSED_NAME    = "btn_lightswitch";
+
+static char *PIR_NAME                    = "pir";
+
+static char *OVEN_ON_NAME                = "on_oven_on";
+static char *OVEN_OFF_NAME               = "on_oven_off";
+static char *OVEN_STATE_NAME             = "oven_heating";
+
+static char *BACKDOOR_STATE_NAME         = "backdoor_open";
+static char *BACKDOOR_OPENED_NAME        = "backdoor_opened";
+static char *BACKDOOR_CLOSED_NAME        = "backdoor_closed";
+
+static char *AMP_INC_NAME                = "amp_inc";
+static char *AMP_DEC_NAME                = "amp_dec";
 
 /******************************************************************************
  * Constant Values                                                            *
  ******************************************************************************/
 
+static const int IO_EXPANDER_ADDRESS     = 2;
+
 static const int BTN_LOOP_PERIOD         = 100;
 static const int SLOW_LOOP_PERIOD        = 1000;
 
 static const int RGBLED_FADE_FAST        = 250;
+
+static const int OVEN_STATE_THRESHOLD    = 512;
+
+static const int PIR_THRESHOLD           = 712;
 
 static const int WASHING_STATE_THRESHOLD = 512;
 static const unsigned long WASHING_MIN   = 5;
@@ -106,7 +136,6 @@ static const int MODE_COLOURS[1<<NUM_BTN_MODE][NUM_BTN_NORM][3]
                                              { 63, 63,  0}}  // Mode 2:4
                                            };
 
-static const int PIR_THRESHOLD           = 700;
 static const int LIGHTSWITCH_THRESHOLD   = 200;
 
 
@@ -130,6 +159,23 @@ shetsource_init()
 
 
 /******************************************************************************
+ * I/O Expander Board Boiler-Plate                                            *
+ ******************************************************************************/
+
+io_expander expander;
+
+void
+io_init(void)
+{
+	Wire.begin();
+	pinMode(PIN_IO_INTERRUPT, INPUT);
+	digitalWrite(PIN_IO_INTERRUPT, LOW);
+	init_io_expander(&expander, IO_EXPANDER_ADDRESS);
+}
+
+
+
+/******************************************************************************
  * Lights                                                                     *
  ******************************************************************************/
 
@@ -146,8 +192,6 @@ Lighting light_lounge  = Lighting(PIN_SERVO_LOUNGE,
 bool light_kitchen_requested, light_kitchen_state;
 bool light_lounge_requested,  light_lounge_state;
 
-// Lounge PIR event
-SHETSource::LocalEvent *pir;
 SHETSource::LocalEvent *lightswitch_pressed;
 
 
@@ -172,17 +216,14 @@ void
 lights_init()
 {
 	// Setup lightswitch
-	pinMode(APIN_LIGHTSWITCH, INPUT);
-	digitalWrite(APIN_LIGHTSWITCH, LOW);
+	//pinMode(APIN_LIGHTSWITCH, INPUT);
+	//digitalWrite(APIN_LIGHTSWITCH, LOW);
 	
 	// Add SHET properties
 	shetsource.AddProperty(LIGHT_KITCHEN_NAME, set_light_kitchen, get_light_kitchen);
 	shetsource.AddProperty(LIGHT_LOUNGE_NAME,  set_light_lounge,  get_light_lounge);
 	
 	shetsource.AddAction(LIGHT_TOGGLE_NAME, lights_toggle);
-	
-	pir = shetsource.AddEvent(PIR_NAME);
-	lightswitch_pressed = shetsource.AddEvent(LIGHTSWITCH_PRESSED_NAME);
 	
 	// Move servos to rest position
 	light_kitchen.init();
@@ -193,22 +234,16 @@ lights_init()
 void
 lights_refresh()
 {
-	int pin = analogRead(APIN_LIGHTSWITCH);
-	bool new_btn_state = pin < LIGHTSWITCH_THRESHOLD;
-	bool new_pir_state = (pin > LIGHTSWITCH_THRESHOLD) && (pin < PIR_THRESHOLD);
+	//int pin = analogRead(APIN_LIGHTSWITCH);
+	//bool new_btn_state = pin < LIGHTSWITCH_THRESHOLD;
+	//bool new_pir_state = (pin > LIGHTSWITCH_THRESHOLD) && (pin < PIR_THRESHOLD);
 	
 	// TODO: Rewrite with button library
 	// Handle button
-	static bool btn_state = false;
-	if (new_btn_state != btn_state && new_btn_state == true)
-		(*lightswitch_pressed)();
-	btn_state = new_btn_state;
-	
-	// Handle PIR
-	static bool pir_state = false;
-	if (new_pir_state != pir_state && new_pir_state == true)
-		(*pir)();
-	pir_state = new_pir_state;
+	//static bool btn_state = false;
+	//if (new_btn_state != btn_state && new_btn_state == true)
+	//	(*lightswitch_pressed)();
+	//btn_state = new_btn_state;
 	
 	// Refresh servos
 	light_kitchen.refresh();
@@ -229,7 +264,35 @@ lights_refresh()
 
 
 /******************************************************************************
- * RGB LED                                                                    *
+ * PIR                                                                        *
+ ******************************************************************************/
+
+// Lounge PIR event
+SHETSource::LocalEvent *pir;
+
+void
+pir_init(void)
+{
+	pir = shetsource.AddEvent(PIR_NAME);
+}
+
+
+void
+pir_refresh(void)
+{
+	static bool pir_state = false;
+	bool new_pir_state = analogRead(APIN_PIR) < PIR_THRESHOLD;
+	
+	// Handle PIR
+	if (new_pir_state != pir_state && new_pir_state == true)
+		(*pir)();
+	pir_state = new_pir_state;
+}
+
+
+
+/******************************************************************************
+ * rgb led                                                                    *
  ******************************************************************************/
 
 RGBLED rgbled = RGBLED(PIN_RGBLED_R, PIN_RGBLED_G, PIN_RGBLED_B);
@@ -295,7 +358,7 @@ static unsigned long washing_start_time = 0;
 int
 get_washing_state()
 {
-	return (analogRead(APIN_WASHING) > WASHING_STATE_THRESHOLD)
+	return (analogRead(APIN_WASHING) < WASHING_STATE_THRESHOLD)
 	       ? (int)((millis() - washing_start_time) / 1000l)
 	       : 0;
 }
@@ -315,7 +378,7 @@ void
 washing_refresh()
 {
 	static bool state = false;
-	bool new_state = analogRead(APIN_WASHING) > WASHING_STATE_THRESHOLD;
+	bool new_state = analogRead(APIN_WASHING) < WASHING_STATE_THRESHOLD;
 	
 	if (state != new_state && new_state == false) {
 		// Washing finished
@@ -330,6 +393,107 @@ washing_refresh()
 	}
 	
 	state = new_state;
+}
+
+
+
+/******************************************************************************
+ * Oven Sensor                                                                *
+ ******************************************************************************/
+
+SHETSource::LocalEvent *oven_on;
+SHETSource::LocalEvent *oven_off;
+
+int oven_state = false;
+
+
+void
+oven_init(void)
+{
+	oven_on  = shetsource.AddEvent(OVEN_ON_NAME);
+	oven_off = shetsource.AddEvent(OVEN_OFF_NAME);
+	shetsource.AddProperty(OVEN_STATE_NAME, &oven_state);
+}
+
+
+void
+oven_refresh()
+{
+	int new_state = analogRead(APIN_OVEN) > OVEN_STATE_THRESHOLD;
+	
+	if (oven_state != new_state) {
+		if (new_state)
+			(*oven_on)();
+		else
+			(*oven_off)();
+	}
+	
+	oven_state = new_state;
+}
+
+
+
+/******************************************************************************
+ * Lightswitch                                                                *
+ ******************************************************************************/
+
+SHETSource::LocalEvent *lightswitch;
+
+void
+lightswitch_init(void)
+{
+	lightswitch = shetsource.AddEvent(LIGHTSWITCH_PRESSED_NAME);
+	pinMode(&expander, PIN_LIGHTSWITCH, INPUT);
+	digitalWrite(&expander, PIN_LIGHTSWITCH, HIGH);
+}
+
+
+void
+lightswitch_refresh()
+{
+	static int state = false;
+	int new_state = digitalRead(&expander, PIN_LIGHTSWITCH);
+	
+	if (state != new_state && new_state == true)
+		(*lightswitch)();
+	
+	state = new_state;
+}
+
+
+
+/******************************************************************************
+ * Backdoor Sensor                                                            *
+ ******************************************************************************/
+
+SHETSource::LocalEvent *backdoor_opened;
+SHETSource::LocalEvent *backdoor_closed;
+int backdoor_state = false;
+
+void
+backdoor_init(void)
+{
+	shetsource.AddProperty(BACKDOOR_STATE_NAME, &backdoor_state);
+	backdoor_opened = shetsource.AddEvent(BACKDOOR_OPENED_NAME);
+	backdoor_closed = shetsource.AddEvent(BACKDOOR_CLOSED_NAME);
+	
+	pinMode(&expander, PIN_BACKDOOR, INPUT);
+	digitalWrite(&expander, PIN_BACKDOOR, HIGH);
+}
+
+
+void
+backdoor_refresh()
+{
+	int new_state = digitalRead(&expander, PIN_BACKDOOR);
+	
+	if (backdoor_state != new_state)
+		if (new_state)
+			(*backdoor_opened)();
+		else
+			(*backdoor_closed)();
+	
+	backdoor_state = new_state;
 }
 
 
@@ -429,8 +593,8 @@ btns_init()
 {
 	// Setup pins
 	for (int i = 0; i < NUM_BTNS; i++) {
-		pinMode(PIN_BTN[i], INPUT);
-		digitalWrite(PIN_BTN[i], LOW);
+		pinMode(&expander, PIN_BTN[i], INPUT);
+		attachInterrupt(&expander, PIN_BTN[i]);
 	}
 	
 	// Setup SHET events
@@ -454,10 +618,62 @@ btns_refresh()
 {
 	// Read in pins
 	uint8_t btn_states = 0;
-	for (int i = 0; i < NUM_BTNS; i++)
-		btn_states |= (!digitalRead(PIN_BTN[i])) << i;
+	for (int i = 0; i < NUM_BTNS; i++) {
+		btn_states |= (!digitalRead(&expander, PIN_BTN[i])) << i;
+	}
 	
 	btns.set_btn_states(btn_states);
+}
+
+
+
+/******************************************************************************
+ * Amplifier stuff                                                            *
+ ******************************************************************************/
+
+static const int AMP_WAIT_TIME = 10;
+
+void
+amp_wave(uint8_t pin_a, uint8_t pin_b)
+{
+	digitalWrite(&expander, pin_a, HIGH);
+	delay(AMP_WAIT_TIME);
+	digitalWrite(&expander, pin_b, HIGH);
+	delay(AMP_WAIT_TIME);
+	digitalWrite(&expander, pin_a, LOW);
+	delay(AMP_WAIT_TIME);
+	digitalWrite(&expander, pin_b, LOW);
+	delay(AMP_WAIT_TIME);
+}
+
+
+void
+amp_inc_vol(int repeat)
+{
+	for (int i = 0; i < repeat; i++)
+		amp_wave(PIN_AMP_A, PIN_AMP_B);
+}
+
+
+void
+amp_dec_vol(int repeat)
+{
+	for (int i = 0; i < repeat; i++)
+		amp_wave(PIN_AMP_B, PIN_AMP_A);
+}
+
+
+void
+amp_init()
+{
+	digitalWrite(&expander, PIN_AMP_A, LOW);
+	pinMode(&expander, PIN_AMP_A, OUTPUT);
+	
+	digitalWrite(&expander, PIN_AMP_B, LOW);
+	pinMode(&expander, PIN_AMP_B, OUTPUT);
+	
+	shetsource.AddAction(AMP_DEC_NAME, amp_dec_vol);
+	shetsource.AddAction(AMP_INC_NAME, amp_inc_vol);
 }
 
 
@@ -470,10 +686,16 @@ void
 setup()
 {
 	shetsource_init();
+	io_init();
 	lights_init();
 	rgbled_init();
 	washing_init();
+	oven_init();
+	pir_init();
 	btns_init();
+	lightswitch_init();
+	backdoor_init();
+	amp_init();
 }
 
 
@@ -492,6 +714,7 @@ btn_loop()
 {
 	lights_refresh();
 	btns_refresh();
+	lightswitch_refresh();
 }
 
 
@@ -500,6 +723,9 @@ inline void
 slow_loop()
 {
 	washing_refresh();
+	oven_refresh();
+	pir_refresh();
+	backdoor_refresh();
 }
 
 
